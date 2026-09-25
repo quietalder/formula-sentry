@@ -6,15 +6,19 @@ import { analyzeCell } from './formulaRules.js';
 interface Options {
   filePath: string | null; // null means read from stdin
   hasHeader: boolean;
+  jsonOutput: boolean;
 }
 
 function parseArgs(argv: string[]): Options {
   let hasHeader = true;
+  let jsonOutput = false;
   let filePath: string | null = null;
 
   for (const arg of argv) {
     if (arg === '--no-header') {
       hasHeader = false;
+    } else if (arg === '--json') {
+      jsonOutput = true;
     } else if (arg === '-h' || arg === '--help') {
       printUsage();
       process.exit(0);
@@ -26,14 +30,23 @@ function parseArgs(argv: string[]): Options {
     }
   }
 
-  return { filePath, hasHeader };
+  return { filePath, hasHeader, jsonOutput };
 }
 
 function printUsage(): void {
   process.stdout.write(
-    'usage: formula-sentry [--no-header] <file.csv>\n' +
-      '       cat file.csv | formula-sentry [--no-header]\n',
+    'usage: formula-sentry [--no-header] [--json] <file.csv>\n' +
+      '       cat file.csv | formula-sentry [--no-header] [--json]\n',
   );
+}
+
+interface JsonFinding {
+  row: number;
+  column: string;
+  value: string;
+  functions: string[];
+  volatileFunctions: string[];
+  externalReference: boolean;
 }
 
 function columnLabel(headers: string[] | null, index: number): string {
@@ -42,7 +55,7 @@ function columnLabel(headers: string[] | null, index: number): string {
 }
 
 async function main(): Promise<void> {
-  const { filePath, hasHeader } = parseArgs(process.argv.slice(2));
+  const { filePath, hasHeader, jsonOutput } = parseArgs(process.argv.slice(2));
 
   if (filePath === null && process.stdin.isTTY) {
     printUsage();
@@ -57,6 +70,7 @@ async function main(): Promise<void> {
   let formulasFound = 0;
   let volatileFound = 0;
   let externalRefsFound = 0;
+  const jsonFindings: JsonFinding[] = [];
 
   for await (const row of parseCsvStream(input)) {
     rowsScanned++;
@@ -73,13 +87,26 @@ async function main(): Promise<void> {
 
       formulasFound++;
       const label = columnLabel(headers, col);
+      if (finding.volatileFunctions.length > 0) volatileFound++;
+      if (finding.externalReference) externalRefsFound++;
+
+      if (jsonOutput) {
+        jsonFindings.push({
+          row: rowsScanned,
+          column: label,
+          value: row[col] as string,
+          functions: finding.functions,
+          volatileFunctions: finding.volatileFunctions,
+          externalReference: finding.externalReference,
+        });
+        continue;
+      }
+
       const flags: string[] = [];
       if (finding.volatileFunctions.length > 0) {
-        volatileFound++;
         flags.push(`volatile: ${finding.volatileFunctions.join(', ')}`);
       }
       if (finding.externalReference) {
-        externalRefsFound++;
         flags.push('external workbook reference');
       }
 
@@ -88,14 +115,31 @@ async function main(): Promise<void> {
     }
   }
 
-  process.stdout.write(
-    '\n' +
-      `rows scanned: ${rowsScanned}\n` +
-      `cells scanned: ${cellsScanned}\n` +
-      `formulas found: ${formulasFound}\n` +
-      `volatile formulas: ${volatileFound}\n` +
-      `external workbook references: ${externalRefsFound}\n`,
-  );
+  if (jsonOutput) {
+    process.stdout.write(
+      JSON.stringify(
+        {
+          rowsScanned,
+          cellsScanned,
+          formulasFound,
+          volatileFound,
+          externalRefsFound,
+          findings: jsonFindings,
+        },
+        null,
+        2,
+      ) + '\n',
+    );
+  } else {
+    process.stdout.write(
+      '\n' +
+        `rows scanned: ${rowsScanned}\n` +
+        `cells scanned: ${cellsScanned}\n` +
+        `formulas found: ${formulasFound}\n` +
+        `volatile formulas: ${volatileFound}\n` +
+        `external workbook references: ${externalRefsFound}\n`,
+    );
+  }
 
   // Non-zero exit lets this run as a CI check: fail the build if a formula
   // slipped into a CSV export that's supposed to hold flat data.

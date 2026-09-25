@@ -56,7 +56,34 @@ cat exported_report.csv | node dist/cli.js
 If the file has no header row, add `--no-header` so column numbers are
 reported instead of column names.
 
-Sample output:
+Add `--json` to get machine-readable output instead, for a CI step that wants
+to parse results rather than grep them:
+
+```
+node dist/cli.js --json exported_report.csv
+```
+
+```json
+{
+  "rowsScanned": 200,
+  "cellsScanned": 1800,
+  "formulasFound": 3,
+  "volatileFound": 1,
+  "externalRefsFound": 1,
+  "findings": [
+    {
+      "row": 14,
+      "column": "Total Revenue",
+      "value": "=SUM(B2:B13)",
+      "functions": ["SUM"],
+      "volatileFunctions": [],
+      "externalReference": false
+    }
+  ]
+}
+```
+
+Sample output (default, human-readable mode):
 
 ```
 row 14, Total Revenue: =SUM(B2:B13)
